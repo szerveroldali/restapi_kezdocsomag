@@ -30,7 +30,12 @@ app.use(async (err, req, res, next) => {
     }
     await fs.appendFile(
         "error.log",
-        [`[${date.format(new Date(), "YYYY. MM. DD. HH:mm:ss")}]`, err.stack].join("\n") + "\n\n"
+        [
+            `[${date.format(new Date(), "YYYY. MM. DD. HH:mm:ss")}]`,
+            "Name: " + err.name,
+            "Message: " + err.message,
+            "Stack:\n" + err.stack,
+        ].join("\n") + "\n\n"
     );
     return res.status(StatusCodes.INTERNAL_SERVER_ERROR).send({
         httpStatus: ReasonPhrases.INTERNAL_SERVER_ERROR,

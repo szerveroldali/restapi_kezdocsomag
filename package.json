@@ -24,6 +24,7 @@
         "inquirer": "^8.2.0",
         "jsonwebtoken": "^8.5.1",
         "loadsh": "^0.0.4",
+        "lz-string": "^1.4.4",
         "sequelize": "^6.6.2",
         "slug": "^5.1.0",
         "sqlite3": "^5.0.2",

@@ -1,10 +1,9 @@
 "use strict";
 
 // Faker dokumentáció, API referencia: https://fakerjs.dev/guide/#node-js
-const { faker } = require('@faker-js/faker');
+const { faker } = require("@faker-js/faker");
 const chalk = require("chalk");
-const models = require("../models");
-//const { ... } = models;
+//const { ... } = require("../models");
 
 module.exports = {
     up: async (queryInterface, Sequelize) => {

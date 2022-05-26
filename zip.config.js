@@ -1,7 +1,7 @@
-{
-    "subject": "Szerveroldali webprogramozás",
-    "task": "REST API ZH",
-    "ignore": [
+module.exports = {
+    subject: "Szerveroldali webprogramozás",
+    task: "REST API ZH",
+    ignore: [
         ".git/**",
         ".idea/**",
         ".vscode/**",
@@ -9,14 +9,16 @@
         "package-lock.json",
         "zip.js",
         "zipfiles/**",
-        "config/zipper.json",
-        "database/*.sqlite",
-        "test/**",
+        "zip.config.js",
+        "prettier.config.js",
+        "**/*.sqlite",
+        "test/**/!(.gitkeep)",
         "error.log",
+        "LICENSE",
         "**/*.md",
         "**/.gitignore",
         "**/.editorconfig",
         "**/.prettierignore",
-        "**/.prettierrc"
-    ]
-}
+        "**/.prettierrc",
+    ],
+};

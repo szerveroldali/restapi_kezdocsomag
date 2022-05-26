@@ -12,27 +12,55 @@ const date = require("date-and-time");
 const Zip = require("adm-zip");
 const path = require("path");
 const slug = require("slug");
-const filesize = require("filesize");
+const filesize = require("filesize").partial({ base: 2, standard: "jedec" });
 const _ = require("lodash");
-const config = require("./config/zipper.json");
+const crypto = require("crypto");
+const { table } = require("table");
+const indentString = require("indent-string");
+const treeify = require("object-treeify");
+const stripAnsi = require("strip-ansi");
+const { isBinaryFileSync } = require("isbinaryfile");
+const config = require("./zip.config.js");
 
 const pGlob = promisify(glob);
 const currentDate = new Date();
 
+const tableConfig = {
+    border: {
+        topBody: `─`,
+        topJoin: `┬`,
+        topLeft: `┌`,
+        topRight: `┐`,
+
+        bottomBody: `─`,
+        bottomJoin: `┴`,
+        bottomLeft: `└`,
+        bottomRight: `┘`,
+
+        bodyLeft: `│`,
+        bodyRight: `│`,
+        bodyJoin: `│`,
+
+        joinBody: `─`,
+        joinLeft: `├`,
+        joinRight: `┤`,
+        joinJoin: `┼`,
+    },
+};
+
 // Nyilatkozat sablon
 const statementTemplate = `NYILATKOZAT
 ===========
-
 Én, {NAME} (Neptun kód: {NEPTUN}) kijelentem, hogy ezt a megoldást én küldtem be a "{SUBJECT}" tárgy "{TASK}" nevű számonkéréséhez.
 A feladat beadásával elismerem, hogy tudomásul vettem a nyilatkozatban foglaltakat.
-
 - Kijelentem, hogy ez a megoldás a saját munkám.
 - Kijelentem, hogy nem másoltam vagy használtam harmadik féltől származó megoldásokat.
 - Kijelentem, hogy nem továbbítottam megoldást hallgatótársaimnak, és nem is tettem azt közzé.
 - Tudomásul vettem, hogy az Eötvös Loránd Tudományegyetem Hallgatói Követelményrendszere (ELTE szervezeti és működési szabályzata, II. Kötet, 74/C. §) kimondja, hogy mindaddig, amíg egy hallgató egy másik hallgató munkáját - vagy legalábbis annak jelentős részét - saját munkájaként mutatja be, az fegyelmi vétségnek számít.
 - Tudomásul vettem, hogy a fegyelmi vétség legsúlyosabb következménye a hallgató elbocsátása az egyetemről.
 
-Kelt: {DATE}`;
+Kelt: {DATE}
+`;
 
 // Reguláris kifejezés nevesített csoportokkal, amivel bekérhetők a nyilatkozatban lévő adatok
 const statementRegex = new RegExp(
@@ -70,13 +98,17 @@ const collectFiles = async () =>
         nodir: true,
     });
 
+const checksum = (content) => {
+    return crypto.createHash("md5").update(content, "utf8").digest("hex");
+};
+
 const zipFiles = async (files, { name, neptun }) => {
+    process.stdout.write(" 2. Fájlok becsomagolása... ");
     const zip = new Zip();
     for (const file of files) {
-        process.stdout.write(`   * becsomagolás: ${chalk.grey(file)}... `);
         zip.addLocalFile(file, path.parse(file).dir);
-        console.log(chalk.green("OK."));
     }
+    console.log(chalk.green("OK."));
     const formattedDate = date.format(new Date(), "YYYYMMDD_HHmmss");
     const nameSlug = slug(name, { replacement: "_", lower: false });
     const task = slug(config.task, { replacement: "_" });
@@ -85,7 +117,120 @@ const zipFiles = async (files, { name, neptun }) => {
     process.stdout.write(" 3. Archívum mentése ide: " + chalk.gray(zipPath) + "... ");
     zip.writeZip(zipPath);
     const zipSize = filesize((await fs.stat(zipPath)).size);
-    console.log(chalk.white(`${chalk.green("OK")}, méret: ${chalk.gray(zipSize)}.`));
+    console.log(chalk.white(`${chalk.green("OK")}. Méret: ${chalk.gray(zipSize)}.`));
+    return { zippedFiles: files, zipPath };
+};
+
+const checkZip = async (zippedFiles, zipPath) => {
+    console.log(" Becsomagolt fájlok áttekintése:");
+    const zipFile = new Zip(zipPath);
+    let fileTree = {};
+    let checksumMismatches = [];
+    for (const file of zippedFiles) {
+        const parsed = path.parse(file);
+        const originalFileContentBuffer = await fs.readFile(file);
+        const originalChecksum = checksum(originalFileContentBuffer);
+        const zippedFileContentBuffer = zipFile.getEntry(file).getData();
+        const zippedChecksum = checksum(zippedFileContentBuffer);
+        const checksumMatch = originalChecksum === zippedChecksum;
+        if (!checksumMatch)
+            checksumMismatches.push([chalk.red(file), chalk.yellow(originalChecksum), chalk.yellow(zippedChecksum)]);
+        const data = {
+            dirs: parsed.dir
+                .split("/")
+                .filter((dir) => dir !== "")
+                .map((dir) => chalk.yellow(dir)),
+            file: checksumMatch ? chalk.green(parsed.base) : chalk.red(parsed.base),
+            checksumMatch,
+        };
+        _.set(
+            fileTree,
+            [...data.dirs, data.file],
+            chalk.gray(
+                [
+                    isBinaryFileSync(zippedFileContentBuffer)
+                        ? "Bináris fájl"
+                        : `${zippedFileContentBuffer.toString().split("\n").length} sor`,
+                    `eredeti méret: ${filesize(Buffer.byteLength(zippedFileContentBuffer))}`,
+                ].join(", ")
+            )
+        );
+    }
+
+    const order = (obj) => {
+        obj = _.fromPairs(
+            _.toPairs(obj).sort((a, b) => {
+                if (_.isString(a[1]) && _.isObject(b[1])) return 1;
+                else if (_.isObject(a[1]) && _.isString(b[1])) return -1;
+                return stripAnsi(a[0]).localeCompare(stripAnsi(b[0]));
+            })
+        );
+        for (const key of Object.keys(obj)) if (_.isObject(obj[key])) obj[key] = order(obj[key]);
+        return obj;
+    };
+
+    fileTree = order(fileTree);
+
+    console.log(indentString(chalk.yellow(zipPath), 4));
+    console.log(indentString(treeify(fileTree), 4));
+    console.log(" ");
+
+    console.log(
+        indentString(
+            chalk.white(
+                `* Ha egy fájl neve ${chalk.green(
+                    "zöld"
+                )}, az azt jelenti, hogy a fájl az ellenőrzés alapján sértetlenül be lett csomagolva a zip-be.`
+            ),
+            4
+        )
+    );
+    console.log(
+        indentString(
+            "* A zippelő csak azt ellenőrizte, hogy a fájl sértetlenül lett-e becsomagolva, a tartalmát nem!",
+            4
+        )
+    );
+
+    if (checksumMismatches.length > 0) {
+        console.log(" ");
+        console.log(
+            indentString(
+                chalk.bgRed.white(
+                    `${chalk.bold("FIGYELEM!")} Az alábbi fájlok az ellenőrzés során sérültnek bizonyultak:`
+                ),
+                4
+            )
+        );
+        console.log(
+            indentString(
+                table(
+                    [
+                        ["Fájl", "Eredeti fájl ellenőrző összege", "Zippelt fájl ellenőrző összege"],
+                        ...checksumMismatches,
+                    ],
+                    tableConfig
+                ),
+                4
+            )
+        );
+        console.log(
+            indentString(
+                chalk.red(
+                    "Elképzelhető, hogy a probléma megoldható azzal, ha bezárod azokat a programokat, amelyek használhatják a fájlokat."
+                ),
+                4
+            )
+        );
+        console.log(
+            indentString(
+                chalk.red(
+                    "Az is előfordulhat, hogy ez egy egyszeri, váratlan hiba volt, és a következő próbálkozásnál már minden jó lesz."
+                ),
+                4
+            )
+        );
+    }
 };
 
 const handleStatement = async () => {
@@ -101,6 +246,15 @@ const handleStatement = async () => {
                     )} névre és ${chalk.yellow(data.neptun)} Neptun kódra.`
                 )
             );
+            console.log(
+                chalk.green(
+                    `   Ha a megadott adatok hibásak, töröld a ${chalk.yellow(
+                        "statement.txt"
+                    )} fájlt és hívd meg újra a zip parancsot a`
+                )
+            );
+            console.log(chalk.green(`   nyilatkozat kitöltő újboli eléréséhez.`));
+
             console.log(" ");
             // Ha korábban ki lett töltve, itt végeztünk is
             return { name: data.name, neptun: data.neptun };
@@ -117,7 +271,11 @@ const handleStatement = async () => {
     }
 
     // Nyilatkozat szövegének megjelenítése
-    for (const line of statementTemplate.split("\n")) {
+    const statementTemplateReplaced = statementTemplate
+        .replace("{SUBJECT}", config.subject)
+        .replace("{TASK}", config.task)
+        .replace("{DATE}", date.format(currentDate, "YYYY. MM. DD."));
+    for (const line of statementTemplateReplaced.split("\n")) {
         console.log(chalk.gray(line));
     }
     console.log(" ");
@@ -143,7 +301,7 @@ const handleStatement = async () => {
         );
     } else {
         console.log(
-            chalk.red(
+            chalk.bgRed.white(
                 ">> A tárgy követelményei szerint a nyilatkozat elfogadása és mellékelése kötelező, ezért ha nem fogadod el, akkor nem tudjuk értékelni a zárthelyidet."
             )
         );
@@ -232,8 +390,7 @@ const handleZipping = async ({ name, neptun }) => {
     const files = await collectFiles();
     console.log(chalk.green("OK."));
 
-    console.log(" 2. Fájlok becsomagolása...");
-    await zipFiles(files, { name, neptun });
+    return await zipFiles(files, { name, neptun });
 };
 
 (async () => {
@@ -242,14 +399,20 @@ const handleZipping = async ({ name, neptun }) => {
         console.log(" ");
         const { name, neptun } = await handleStatement();
 
-        console.log(chalk.bgGray.black("2. lépés: Fájlok becsomagolása"));
+        console.log(chalk.bgGray.black("2. lépés: Becsomagolás"));
         console.log(" ");
-        await handleZipping({ name, neptun });
+        const { zippedFiles, zipPath } = await handleZipping({ name, neptun });
+
+        console.log(" ");
+        console.log(chalk.bgGray.black("3. lépés: Ellenőrzés"));
+        console.log(" ");
+        await checkZip(zippedFiles, zipPath);
 
         // Tudnivalók megjelenítése
         console.log(" ");
-        console.log(chalk.yellow(" * A feladatot a Canvas rendszeren keresztül kell beadni a határidő lejárta előtt."));
+        console.log(chalk.bgGray.black("Tudnivalók"));
         console.log(" ");
+        console.log(chalk.yellow(" * A feladatot a Canvas rendszeren keresztül kell beadni a határidő lejárta előtt."));
         console.log(chalk.yellow(" * Az időkeret utolsó 15 percét a beadás nyugodt és helyes elvégzésére adjuk."));
         console.log(chalk.yellow(" * A feladat megfelelő, hiánytalan beadása a hallgató felelőssége!"));
         console.log(

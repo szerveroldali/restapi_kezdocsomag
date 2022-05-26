@@ -21,3 +21,4 @@ statement.txt
 #/test/tester.js
 #/test/inject.js
 error.log
+*.sqlite

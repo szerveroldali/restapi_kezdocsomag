@@ -4,6 +4,7 @@ require("express-async-errors");
 const { StatusCodes, ReasonPhrases } = require("http-status-codes");
 const fs = require("fs").promises;
 const date = require("date-and-time");
+const chalk = require("chalk");
 const AutoTester = require("./test/inject");
 
 // Express app létrehozása
@@ -12,13 +13,8 @@ const app = express();
 // Middleware, ami parse-olja a JSON adatokat a request body-ból
 app.use(express.json());
 
-// Routerek importálása
-const exampleRouter = require("./routers/example");
-// ...
-
-// Routerek bind-olása adott végpontokhoz
-app.use("/example", exampleRouter);
-// Ide vedd fel a további routereket/végpontokat:
+// Routerek beállítása
+app.use("/", require("./routers/main"));
 // ...
 
 // Végső middleware a default error handler felülírásához, így az nem
@@ -51,7 +47,7 @@ app.use(async (err, req, res, next) => {
 (async () => {
     const port = process.env.PORT || 4000;
     app.listen(port, () => {
-        console.log(`Az Express app fut, ezen a porton: ${port}`);
+        console.log(`Az Express app fut: ${chalk.yellow(`http://127.0.0.1:${port}/graphql`)}`);
 
         // FONTOS! Erre szükség van, hogy az automata tesztelő megfelelően tudjon inicializálni!
         // Ehhez a sorhoz ne nyúlj a munkád közben: hagyd legalul, ne vedd ki, ne kommenteld ki,
